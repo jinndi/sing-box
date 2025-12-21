@@ -1,0 +1,50 @@
+services:
+  sb:
+    image: ghcr.io/jinndi/sing-box:latest
+    container_name: sb
+    restart: unless-stopped
+    environment:
+      TZ: "Europe/Amsterdam"
+      LOG_LEVEL: "fatal"
+      DNS_DIRECT: "https://dns.google"
+      DNS_PROXY: "tls://one.one.one.one"
+      DNS_PROXY_TTL: "300"
+      ENABLE_ADGUARD: "false"
+      BLOCK_GEOSITE: ""
+      BLOCK_GEOIP: ""
+      BLOCK_SITES: ""
+      PROXY_LINK: ""
+      WARP_OVER_PROXY: "false"
+      WARP_OVER_DIRECT: "false"
+      ROUTE_CIDR: ""
+      ROUTE_FINAL: "direct"
+      BYPASS_GEOSITE: ""
+      BYPASS_GEOIP: ""
+      PASS_SITES: ""
+      BITTORRENT: "direct"
+    ports:
+      # здесть укажите порты сервисов которые будут испльзовать сеть этого сервиса
+    volumes:
+      - sb_data:/data
+      - /lib/modules:/lib/modules:ro
+      # ! Add your custom hosts file here if you want to use it
+      #- ./hosts:/opt/hosts:ro
+    networks:
+      - sb_net
+    privileged: true
+
+volumes:
+  wgd_data:
+    name: sb_data
+    driver: local
+
+networks:
+  wgd_net:
+    name: sb_net
+    driver: bridge
+    enable_ipv6: true
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.28.200.0/24
+        - subnet: fd00:dead:beef:200::/64
