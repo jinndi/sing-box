@@ -8,7 +8,7 @@
 <img alt="Release" src="https://img.shields.io/github/v/release/jinndi/sing-box">
 <img alt="Code size in bytes" src="https://img.shields.io/github/languages/code-size/jinndi/sing-box">
 <img alt="License" src="https://img.shields.io/github/license/jinndi/sing-box">
-<img alt="Actions Workflow Status" src="https://img.shields.io/github/actions/workflow/status/jinndi/sing-box/build-wgd.yml">
+<img alt="Actions Workflow Status" src="https://img.shields.io/github/actions/workflow/status/jinndi/sing-box/build.yml">
 <img alt="Visitor" src="https://hitscounter.dev/api/hit?url=https%3A%2F%2Fgithub.com%2Fjinndi%2Fsing-box&label=visitor&icon=eye&color=%230d6efd&message=&style=flat&tz=UTC">
 </p>
 
