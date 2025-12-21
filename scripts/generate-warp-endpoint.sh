@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 
 register_and_enabled_warp() {
-  local private_key public_key peer_address address_ipv4 address_ipv6
+  local keypair private_key public_key peer_address address_ipv4 address_ipv6
   local pubkey response id token success
 
-  private_key=$(wg genkey)
-
-  pubkey=$(echo "${private_key}" | wg pubkey)
+  keypair=$(sing-box generate wg-keypair)
+  private_key=$(echo "$keypair" | awk '/PrivateKey/ {print $2}')
+  pubkey=$(echo "$keypair" | awk '/PublicKey/ {print $2}')
 
   ins() {
     curl -s --connect-timeout 3 --max-time 6 \
