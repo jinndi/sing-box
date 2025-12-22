@@ -8,7 +8,6 @@
 CONFIG_FILE="${DATA_DIR}/singbox.json"
 LOG_FILE="${DATA_DIR}/singbox.log"
 CACHE_FILE="${DATA_DIR}/singbox.db"
-TUN_NAME="${TUN_NAME-singbox}"
 HOSTS_FILE="/opt/hosts"
 
 PID_SINGBOX=""
@@ -17,6 +16,12 @@ PID_TAIL=""
 validation_options(){
   echo -e "\n------------------- VALIDATION OPTIONS --------------------"
   log "Validating options..."
+
+  if is_valid_tun_name "${TUN_NAME:-singbox}"; then
+    log "TUN_NAME accept: ${TUN_NAME}"
+  else
+    exiterr "TUN_NAME must be a valid"
+  fi
 
   case "${LOG_LEVEL:-}" in
     trace|debug|info|warn|error|fatal|panic)
@@ -436,7 +441,7 @@ cat << EOF > "$CONFIG_FILE"
   },
   "inbounds": [
     {
-      "tag": "tun-in", "type": "tun", "interface_name": "${SINGBOX_TUN_NAME}",
+      "tag": "tun-in", "type": "tun", "interface_name": "${TUN_NAME}",
       "address": ["172.18.0.1/30", "fdfe:dcba:9876::1/126"], "auto_route": true,
       "auto_redirect": true, "strict_route": true, "stack": "mixed", "mtu": 9000
     }

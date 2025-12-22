@@ -15,7 +15,6 @@ LABEL org.opencontainers.image.documentation=https://github.com/jinndi/WGDashboa
 LABEL maintainer=Jinndi
 
 ENV DATA_DIR=/data
-ENV TUN_NAME=singbox
 
 COPY --from=sing-box \
       /usr/local/bin/sing-box \
