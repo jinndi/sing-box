@@ -23,18 +23,16 @@ services:
       PASS_SITES: ""
       BITTORRENT: "direct"
     ports:
-      # здесть укажите порты сервисов которые будут испльзовать сеть этого сервиса
+      # Specify here the service ports that will be used by this service’s network
     volumes:
       - sb_data:/data
       - /lib/modules:/lib/modules:ro
-      # ! Add your custom hosts file here if you want to use it
-      #- ./hosts:/opt/hosts:ro
     networks:
       - sb_net
     privileged: true
 
 volumes:
-  wgd_data:
+  sb_data:
     name: sb_data
     driver: local
 

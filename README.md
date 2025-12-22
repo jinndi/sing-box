@@ -24,6 +24,7 @@
 - Blocking using domain prefixes, GeoSite, and GeoIP lists
 - Cloudflare WARP over direct and proxy connections
 - Supports only two architectures: linux/amd64 and linux/arm64
+- Optimized network settings via sysctl
 
 ## 📋 Requirements
 
