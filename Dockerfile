@@ -26,7 +26,7 @@ COPY ./sysctl.conf /etc/sysctl.conf
 
 RUN set -ex && \
     apk add --no-cache \
-      bash curl iptables iproute2 jq idn2-utils  && \
+      bash curl iptables iproute2 jq openssl idn2-utils  && \
     mkdir -p "$DATA_DIR" && chmod -R +x /scripts /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
