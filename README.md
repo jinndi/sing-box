@@ -133,7 +133,7 @@ To use the network created by this service (container) with other services (cont
 <details>
 <summary>How to get a connection link for the proxy?</summary>
 <hr>
-To get the link, you can use the script from the [jinndi/sing-box-server](https://github.com/jinndi/sing-box-server) repository; it was largely created for this purpose and the links are fully compatible.
+To get the link, you can use the script from the https://github.com/jinndi/sing-box-server repository; it was largely created for this purpose and the links are fully compatible.
 <hr>
 </details>
 <details>
