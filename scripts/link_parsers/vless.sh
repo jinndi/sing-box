@@ -30,9 +30,9 @@ vless_parse_link(){
   # echo "VLESS_HOST=$VLESS_HOST"
   # echo "VLESS_PORT=$VLESS_PORT"
 
-  # Check VLESS_UUID (must be UUID v4)
+  # Check VLESS_UUID
   if [[ -z "$VLESS_UUID" || \
-    ! "$VLESS_UUID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]]
+    ! "$VLESS_UUID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]
   then
     exiterr "VLESS UUID is empty or not a valid UUIDv4"
   fi

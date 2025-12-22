@@ -34,9 +34,9 @@ tuic_parse_link(){
   # echo "TUIC_HOST=$TUIC_HOST"
   # echo "TUIC_PORT=$TUIC_PORT"
 
-  # Check TUIC_UUID (must be UUID v4)
+  # Check TUIC_UUID
   if [[ -z "$TUIC_UUID" || \
-    ! "$TUIC_UUID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]]
+    ! "$TUIC_UUID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]
   then
     exiterr "TUIC UUID is empty or not a valid UUIDv4"
   fi
