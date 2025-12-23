@@ -4,6 +4,9 @@
 <h1 align="center">
 <a href="https://github.com/SagerNet/sing-box">sing-box</a> docker image
 </h1>
+<h3 align="center">
+Dockerized sing-box proxy for use by other services
+</h3>
 <p align="center">
 <img alt="Release" src="https://img.shields.io/github/v/release/jinndi/sing-box">
 <img alt="Code size in bytes" src="https://img.shields.io/github/languages/code-size/jinndi/sing-box">
@@ -12,18 +15,18 @@
 <img alt="Visitor" src="https://hitscounter.dev/api/hit?url=https%3A%2F%2Fgithub.com%2Fjinndi%2Fsing-box&label=visitor&icon=eye&color=%230d6efd&message=&style=flat&tz=UTC">
 </p>
 
-## 🚀 Differences from the official image
-
+## 🧩 Differences from the official image
 - All settings are defined via environment variables
 - Without the need to know the sing-box configuration format
-- Creating a proxy network for use by other services
+- Supports only two architectures: linux/amd64 and linux/arm64
+
+## 🚀 Features
 - Routing based on GeoSite and GeoIP lists
 - Routing only for specified CIDR addresses
 - Custom DNS configuration for both proxy and direct server connections
 - AdGuard domain filtering, enabled in just a few clicks
 - Blocking using domain prefixes, GeoSite, and GeoIP lists
 - Cloudflare WARP over direct and proxy connections
-- Supports only two architectures: linux/amd64 and linux/arm64
 - Optimized network settings via sysctl
 
 ## 📋 Requirements
