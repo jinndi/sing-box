@@ -9,6 +9,7 @@ CONFIG_FILE="${DATA_DIR}/singbox.json"
 LOG_FILE="${DATA_DIR}/singbox.log"
 CACHE_FILE="${DATA_DIR}/singbox.db"
 HOSTS_FILE="/opt/hosts"
+WARP_ENDPOINT="${DATA_DIR}/warp.endpoint"
 
 PID_SINGBOX=""
 PID_TAIL=""
