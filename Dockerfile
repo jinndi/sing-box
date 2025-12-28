@@ -1,8 +1,8 @@
 # https://github.com/SagerNet/sing-box/releases
-ARG v_singbox="v1.12.13"
+ARG v_singbox="v1.12.14"
 
 # https://hub.docker.com/_/alpine/tags
-ARG v_alpine="3.22"
+ARG v_alpine="3.23"
 
 FROM ghcr.io/sagernet/sing-box:${v_singbox} AS sing-box
 
