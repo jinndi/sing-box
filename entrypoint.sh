@@ -420,7 +420,7 @@ start_sing_box(){
       done
     fi
     if [[ "$ENABLE_ADGUARD" == "true" ]]; then
-      base_url="http://raw.githubusercontent.com/jinndi/adguard-filter-list-srs/main/adguard-filter-list.srs"
+      base_url="https://github.com/jinndi/adguard-filter-list-srs/releases/latest/download/adguard-filter-list.srs"
       output+=("{\"tag\":\"adguard\",\"type\":\"remote\",\"format\":\"binary\",\"url\":\"${base_url}\",\"download_detour\":\"$download_detour\",\"update_interval\":\"1d\"}")
     fi
     IFS=','; echo "${output[*]}"
