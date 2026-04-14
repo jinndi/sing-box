@@ -1,5 +1,5 @@
 # https://github.com/SagerNet/sing-box/releases
-ARG v_singbox="v1.12.21"
+ARG v_singbox="v1.12.25"
 
 # https://hub.docker.com/_/alpine/tags
 ARG v_alpine="3.23"
