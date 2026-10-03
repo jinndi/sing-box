@@ -1,16 +1,16 @@
 name: Test
 
 on:
-  push:
-    branches:
-      - oldstable
-      - stable
-      - testing
-      - unstable
-    paths-ignore:
-      - '**.md'
-      - '.github/**'
-      - '!.github/workflows/test.yml'
+  # push:
+  #   branches:
+  #     - oldstable
+  #     - stable
+  #     - testing
+  #     - unstable
+  #   paths-ignore:
+  #     - '**.md'
+  #     - '.github/**'
+  #     - '!.github/workflows/test.yml'
   pull_request:
     branches:
       - oldstable

@@ -1,0 +1,290 @@
+name: Build Keenetic binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without the v prefix"
+        required: true
+        type: string
+      commit:
+        description: "Commit SHA from the selected branch (optional)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keenetic-binary-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resolve_commit:
+    name: Resolve build commit
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Validate and resolve commit
+        id: resolve
+        env:
+          COMMIT_INPUT: ${{ inputs.commit }}
+        run: |
+          set -xeuo pipefail
+          branch_ref="origin/${GITHUB_REF_NAME}"
+          if [[ -n "$COMMIT_INPUT" ]]; then
+            git fetch --no-tags origin "$COMMIT_INPUT"
+            build_commit=$(git rev-parse --verify "${COMMIT_INPUT}^{commit}")
+            if ! git merge-base --is-ancestor "$build_commit" "$branch_ref"; then
+              echo "Commit ${build_commit} is not part of branch ${GITHUB_REF_NAME}" >&2
+              exit 1
+            fi
+          else
+            build_commit=$(git rev-parse HEAD)
+          fi
+          echo "sha=${build_commit}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.arch }} ${{ matrix.gomips || 'default' }}${{ matrix.upx && ' UPX' || '' }} binary
+    runs-on: ubuntu-26.04
+    needs: resolve_commit
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+          - { arch: arm64, variant: musl, naive: true }
+          - { arch: mipsle, gomips: softfloat, variant: musl, naive: true, upx: true }
+          - { arch: mips, gomips: softfloat, upx: true }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          ref: ${{ needs.resolve_commit.outputs.sha }}
+          fetch-depth: 1
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.8
+          cache: false
+
+      - name: Cache Go modules
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/go/pkg/mod
+          key: go-mod-linux-${{ hashFiles('go.sum') }}
+          restore-keys: go-mod-linux-
+
+      - name: Clone cronet-go
+        if: matrix.naive
+        run: |
+          set -xeuo pipefail
+          CRONET_GO_VERSION=$(cat .github/CRONET_GO_VERSION)
+          git init ~/cronet-go
+          git -C ~/cronet-go remote add origin https://github.com/sagernet/cronet-go.git
+          git -C ~/cronet-go sparse-checkout set --no-cone '/*' '!/lib'
+          git -C ~/cronet-go fetch --depth=1 --filter=blob:none origin "$CRONET_GO_VERSION"
+          git -C ~/cronet-go checkout FETCH_HEAD
+          git -C ~/cronet-go submodule update --init --recursive --depth=1
+
+      - name: Regenerate Debian keyring
+        if: matrix.naive
+        run: |
+          set -xeuo pipefail
+          rm -f ~/cronet-go/naiveproxy/src/build/linux/sysroot_scripts/keyring.gpg
+          cd ~/cronet-go
+          GPG_TTY=/dev/null ./naiveproxy/src/build/linux/sysroot_scripts/generate_keyring.sh
+
+      - name: Download Chromium toolchain
+        if: matrix.naive
+        run: |
+          set -xeuo pipefail
+          cd ~/cronet-go
+          go run ./cmd/build-naive --target=linux/${{ matrix.arch }} --libc=musl download-toolchain
+
+      - name: Set Chromium toolchain environment
+        if: matrix.naive
+        run: |
+          set -xeuo pipefail
+          cd ~/cronet-go
+          go run ./cmd/build-naive --target=linux/${{ matrix.arch }} --libc=musl env >> "$GITHUB_ENV"
+
+      - name: Set build tags
+        run: |
+          set -xeuo pipefail
+          if [[ "${{ matrix.naive }}" == "true" ]]; then
+            TAGS=$(cat release/DEFAULT_BUILD_TAGS)
+          else
+            TAGS=$(cat release/DEFAULT_BUILD_TAGS_OTHERS)
+          fi
+          if [[ "${{ matrix.variant }}" == "musl" ]]; then
+            TAGS="${TAGS},with_musl"
+          fi
+          echo "BUILD_TAGS=${TAGS}" >> "$GITHUB_ENV"
+          echo "LDFLAGS_SHARED=$(cat release/LDFLAGS)" >> "$GITHUB_ENV"
+
+      - name: Install UPX
+        if: matrix.upx
+        run: |
+          set -xeuo pipefail
+          UPX_VERSION=5.2.1
+          UPX_ARCHIVE="upx-${UPX_VERSION}-amd64_linux.tar.xz"
+          curl -fsSL "https://github.com/upx/upx/releases/download/v${UPX_VERSION}/${UPX_ARCHIVE}" -o "$RUNNER_TEMP/${UPX_ARCHIVE}"
+          tar -xJf "$RUNNER_TEMP/${UPX_ARCHIVE}" -C "$RUNNER_TEMP"
+          sudo install -m 755 "$RUNNER_TEMP/upx-${UPX_VERSION}-amd64_linux/upx" /usr/local/bin/upx
+
+      - name: Build binary
+        run: |
+          set -xeuo pipefail
+          mkdir -p dist
+          BINARY_NAME="sing-box_${VERSION}_linux_${GOARCH}"
+          if [[ -n "${GOMIPS}" ]]; then
+            BINARY_NAME="${BINARY_NAME}_${GOMIPS}"
+          fi
+          if [[ -n "${VARIANT}" ]]; then
+            BINARY_NAME="${BINARY_NAME}_${VARIANT}"
+          fi
+          go build -v -trimpath -o "dist/${BINARY_NAME}" -tags "${BUILD_TAGS}" \
+            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${{ inputs.version }}' ${LDFLAGS_SHARED} -s -w -buildid=" \
+            ./cmd/sing-box
+          if [[ "${UPX_VARIANT}" == "true" ]]; then
+            cp "dist/${BINARY_NAME}" "dist/${BINARY_NAME}_upx"
+            UPX_BINARY="dist/${BINARY_NAME}_upx"
+            compressed=false
+            for level in --best -7 -5 -3; do
+              cp "dist/${BINARY_NAME}" "$UPX_BINARY"
+              if upx "$level" "$UPX_BINARY" && upx -t "$UPX_BINARY"; then
+                echo "UPX compression succeeded with ${level}"
+                compressed=true
+                break
+              fi
+              rm -f "$UPX_BINARY"
+            done
+            if [[ "$compressed" != "true" ]]; then
+              echo "::warning::UPX output failed verification at all compression levels; publishing the original binary only"
+            fi
+          fi
+        env:
+          CGO_ENABLED: ${{ matrix.naive && '1' || '0' }}
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          GOMIPS: ${{ matrix.gomips }}
+          GOMIPS64: ${{ matrix.gomips }}
+          VERSION: ${{ inputs.version }}
+          VARIANT: ${{ matrix.variant }}
+          UPX_VARIANT: ${{ matrix.upx }}
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: keenetic-bin-${{ matrix.arch }}-${{ matrix.variant || 'default' }}-${{ matrix.gomips || 'default' }}${{ matrix.upx && '-upx' || '' }}
+          path: dist/sing-box_*
+          if-no-files-found: error
+          compression-level: 0
+
+  release:
+    name: Upload binaries to GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build, resolve_commit]
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          ref: ${{ needs.resolve_commit.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Download all binary artifacts
+        uses: actions/download-artifact@v5
+        with:
+          pattern: keenetic-bin-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          BRANCH: ${{ github.ref_name }}
+          BUILD_COMMIT: ${{ needs.resolve_commit.outputs.sha }}
+          RELEASE_NOTES: |
+            Standalone sing-box binaries for Keenetic routers.
+
+            Available targets:
+            - Linux ARM64, musl, with Naive support
+            - Linux MIPS little-endian soft-float, musl, with Naive support
+            - Linux MIPS big-endian soft-float
+
+            Build tags:
+            - Common: `with_gvisor`, `with_quic`, `with_grpc`, `with_utls`, `with_clash_api`, `badlinkname`, `tfogo_checklinkname0`
+            - ARM64 and MIPS little-endian: also `with_naive_outbound`, `with_musl`
+
+            UPX-compressed variants use the `_upx` suffix. They are included only when UPX verification succeeds.
+
+            ---
+
+            Самостоятельные бинарные файлы sing-box для роутеров Keenetic.
+
+            Доступные архитектуры:
+            - Linux ARM64, musl, с поддержкой Naive
+            - Linux MIPS little-endian soft-float, musl, с поддержкой Naive
+            - Linux MIPS big-endian soft-float
+
+            Теги сборки:
+            - Общие: `with_gvisor`, `with_quic`, `with_grpc`, `with_utls`, `with_clash_api`, `badlinkname`, `tfogo_checklinkname0`
+            - Для ARM64 и MIPS little-endian дополнительно: `with_naive_outbound`, `with_musl`
+
+            Сжатые UPX варианты имеют суффикс `_upx` и включаются только после успешной проверки UPX.
+        run: |
+          set -xeuo pipefail
+          shopt -s nullglob
+          binaries=(dist/sing-box_*)
+          if (( ${#binaries[@]} == 0 )); then
+            echo "No Keenetic binaries were downloaded" >&2
+            exit 1
+          fi
+
+          tag="v${VERSION}"
+          case "$BRANCH" in
+            testing)
+              is_prerelease=true
+              ;;
+            stable)
+              is_prerelease=false
+              ;;
+            *)
+              echo "Unsupported branch for Keenetic releases: ${BRANCH} (expected testing or stable)" >&2
+              exit 1
+              ;;
+          esac
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            release_id=$(gh release view "$tag" --json databaseId --jq .databaseId)
+            gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+              --method PATCH \
+              -F "name=sing-box ${VERSION}" \
+              -F "body=${RELEASE_NOTES}" \
+              -F "prerelease=${is_prerelease}"
+            gh release upload "$tag" "${binaries[@]}" --clobber
+          else
+            release_flags=(
+              --title "sing-box ${VERSION}"
+              --notes "$RELEASE_NOTES"
+              --target "$BUILD_COMMIT"
+            )
+            if [[ "$is_prerelease" == "true" ]]; then
+              release_flags+=(--prerelease)
+            fi
+            gh release create "$tag" "${binaries[@]}" "${release_flags[@]}"
+          fi
