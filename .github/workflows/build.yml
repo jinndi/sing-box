@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build ${{ matrix.arch }} ${{ matrix.gomips || 'default' }}${{ matrix.upx && ' UPX' || '' }} binary
+    name: Build ${{ matrix.arch }}${{ matrix.upx && ' + UPX' || '' }} binary
     runs-on: ubuntu-26.04
     env:
       BUILD_TAGS: "with_gvisor,with_quic,with_utls,with_clash_api,badlinkname,tfogo_checklinkname0"
@@ -147,12 +147,6 @@ jobs:
           set -xeuo pipefail
           mkdir -p ../dist
           BINARY_NAME="sing-box_${VERSION}_linux_${GOARCH}"
-          if [[ -n "${GOMIPS}" ]]; then
-            BINARY_NAME="${BINARY_NAME}_${GOMIPS}"
-          fi
-          if [[ -n "${VARIANT}" ]]; then
-            BINARY_NAME="${BINARY_NAME}_${VARIANT}"
-          fi
           go build -v -trimpath -o "../dist/${BINARY_NAME}" -tags "${BUILD_TAGS}" \
             -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${{ inputs.version }}' ${LDFLAGS_SHARED} -s -w -buildid=" \
             ./cmd/sing-box
@@ -187,7 +181,7 @@ jobs:
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: keenetic-bin-${{ matrix.arch }}-${{ matrix.variant || 'default' }}-${{ matrix.gomips || 'default' }}${{ matrix.upx && '-upx' || '' }}
+          name: keenetic-bin-${{ matrix.arch }}
           path: dist/sing-box_*
           if-no-files-found: error
           compression-level: 0
@@ -232,13 +226,13 @@ jobs:
       - name: Download ARM64 Keenetic artifact
         uses: actions/download-artifact@v5
         with:
-          name: keenetic-bin-arm64-musl-default
+          name: keenetic-bin-arm64
           path: dist
 
       - name: Make Keenetic artifact executable
         env:
           VERSION: ${{ inputs.version }}
-        run: chmod +x "dist/sing-box_${VERSION}_linux_arm64_musl"
+        run: chmod +x "dist/sing-box_${VERSION}_linux_arm64"
 
       - name: Download official upstream ARM64 binary
         env:
@@ -289,7 +283,7 @@ jobs:
       - name: Verify patched REALITY ClientHello
         env:
           VERSION: ${{ inputs.version }}
-        run: bash .github/verify/reality/verify.sh "dist/sing-box_${VERSION}_linux_arm64_musl"
+        run: bash .github/verify/reality/verify.sh "dist/sing-box_${VERSION}_linux_arm64"
 
   release:
     name: Upload binaries to GitHub Release
