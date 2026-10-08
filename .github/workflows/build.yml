@@ -1,0 +1,381 @@
+name: Build Keenetic binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without the v prefix"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keenetic-binary-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.arch }} ${{ matrix.gomips || 'default' }}${{ matrix.upx && ' UPX' || '' }} binary
+    runs-on: ubuntu-26.04
+    env:
+      BUILD_TAGS: "with_gvisor,with_quic,with_utls,with_clash_api,badlinkname,tfogo_checklinkname0"
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+          - { arch: arm64, variant: musl, naive: true }
+          - { arch: mipsle, gomips: softfloat, variant: musl, naive: true, upx: true }
+          - { arch: mips, gomips: softfloat, upx: true }
+    steps:
+      - name: Checkout workflow and patches
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Validate upstream version
+        id: version
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$VERSION_INPUT" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid sing-box version: ${VERSION_INPUT}" >&2
+            exit 1
+          fi
+          echo "value=${VERSION_INPUT}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout upstream sing-box tag
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          repository: SagerNet/sing-box
+          ref: v${{ steps.version.outputs.value }}
+          path: sing-box
+          persist-credentials: false
+
+      - name: Apply REALITY patch
+        working-directory: sing-box
+        run: git apply --verbose ../.github/patches/reality.patch
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: sing-box/go.mod
+          cache: false
+
+      - name: Cache Go modules
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/go/pkg/mod
+          key: go-mod-linux-${{ hashFiles('sing-box/go.sum') }}
+          restore-keys: go-mod-linux-
+
+      - name: Clone cronet-go
+        if: matrix.naive
+        run: |
+          set -xeuo pipefail
+          CRONET_GO_VERSION=$(cat sing-box/.github/CRONET_GO_VERSION)
+          git init ~/cronet-go
+          git -C ~/cronet-go remote add origin https://github.com/sagernet/cronet-go.git
+          git -C ~/cronet-go sparse-checkout set --no-cone '/*' '!/lib'
+          git -C ~/cronet-go fetch --depth=1 --filter=blob:none origin "$CRONET_GO_VERSION"
+          git -C ~/cronet-go checkout FETCH_HEAD
+          git -C ~/cronet-go submodule update --init --recursive --depth=1
+
+      - name: Regenerate Debian keyring
+        if: matrix.naive
+        run: |
+          set -xeuo pipefail
+          rm -f ~/cronet-go/naiveproxy/src/build/linux/sysroot_scripts/keyring.gpg
+          cd ~/cronet-go
+          GPG_TTY=/dev/null ./naiveproxy/src/build/linux/sysroot_scripts/generate_keyring.sh
+
+      - name: Download Chromium toolchain
+        if: matrix.naive
+        run: |
+          set -xeuo pipefail
+          cd ~/cronet-go
+          go run ./cmd/build-naive --target=linux/${{ matrix.arch }} --libc=musl download-toolchain
+
+      - name: Set Chromium toolchain environment
+        if: matrix.naive
+        run: |
+          set -xeuo pipefail
+          cd ~/cronet-go
+          go run ./cmd/build-naive --target=linux/${{ matrix.arch }} --libc=musl env >> "$GITHUB_ENV"
+
+      - name: Set target build tags
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -xeuo pipefail
+          TAGS="${BUILD_TAGS}"
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            TAGS=",${TAGS},"
+            TAGS="${TAGS/,with_gvisor,/}"
+            TAGS="${TAGS#,}"
+            TAGS="${TAGS%,}"
+          fi
+          if [[ "${{ matrix.naive }}" == "true" ]]; then
+            case ",${TAGS}," in
+              *,with_naive_outbound,*) ;;
+              *) TAGS="${TAGS},with_naive_outbound" ;;
+            esac
+          fi
+          if [[ "${{ matrix.variant }}" == "musl" ]]; then
+            TAGS="${TAGS},with_musl"
+          fi
+          echo "BUILD_TAGS=${TAGS}" >> "$GITHUB_ENV"
+          echo "LDFLAGS_SHARED=$(cat release/LDFLAGS)" >> "$GITHUB_ENV"
+
+      - name: Install UPX
+        if: matrix.upx
+        run: |
+          set -xeuo pipefail
+          UPX_VERSION=5.2.1
+          UPX_ARCHIVE="upx-${UPX_VERSION}-amd64_linux.tar.xz"
+          curl -fsSL "https://github.com/upx/upx/releases/download/v${UPX_VERSION}/${UPX_ARCHIVE}" -o "$RUNNER_TEMP/${UPX_ARCHIVE}"
+          tar -xJf "$RUNNER_TEMP/${UPX_ARCHIVE}" -C "$RUNNER_TEMP"
+          sudo install -m 755 "$RUNNER_TEMP/upx-${UPX_VERSION}-amd64_linux/upx" /usr/local/bin/upx
+
+      - name: Build binary
+        working-directory: sing-box
+        run: |
+          set -xeuo pipefail
+          mkdir -p ../dist
+          BINARY_NAME="sing-box_${VERSION}_linux_${GOARCH}"
+          if [[ -n "${GOMIPS}" ]]; then
+            BINARY_NAME="${BINARY_NAME}_${GOMIPS}"
+          fi
+          if [[ -n "${VARIANT}" ]]; then
+            BINARY_NAME="${BINARY_NAME}_${VARIANT}"
+          fi
+          go build -v -trimpath -o "../dist/${BINARY_NAME}" -tags "${BUILD_TAGS}" \
+            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${{ inputs.version }}' ${LDFLAGS_SHARED} -s -w -buildid=" \
+            ./cmd/sing-box
+          if [[ "${UPX_VARIANT}" == "true" ]]; then
+            cp "../dist/${BINARY_NAME}" "../dist/${BINARY_NAME}_upx"
+            UPX_BINARY="../dist/${BINARY_NAME}_upx"
+            compressed=false
+            for level in --best -7 -5 -3; do
+              cp "../dist/${BINARY_NAME}" "$UPX_BINARY"
+              if upx "$level" "$UPX_BINARY" && upx -t "$UPX_BINARY"; then
+                echo "UPX compression succeeded with ${level}"
+                compressed=true
+                break
+              fi
+              rm -f "$UPX_BINARY"
+            done
+            if [[ "$compressed" != "true" ]]; then
+              echo "::warning::UPX output failed verification at all compression levels; publishing the original binary only"
+            fi
+          fi
+        env:
+          CGO_ENABLED: ${{ matrix.naive && '1' || '0' }}
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          GOMIPS: ${{ matrix.gomips }}
+          GOMIPS64: ${{ matrix.gomips }}
+          VERSION: ${{ inputs.version }}
+          VARIANT: ${{ matrix.variant }}
+          UPX_VARIANT: ${{ matrix.upx }}
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: keenetic-bin-${{ matrix.arch }}-${{ matrix.variant || 'default' }}-${{ matrix.gomips || 'default' }}${{ matrix.upx && '-upx' || '' }}
+          path: dist/sing-box_*
+          if-no-files-found: error
+          compression-level: 0
+
+  verify_arm64:
+    name: Verify ARM64 Keenetic artifact
+    runs-on: ubuntu-24.04-arm
+    needs: build
+    steps:
+      - name: Checkout workflow and patches
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Validate upstream version
+        id: verify_version
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$VERSION_INPUT" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid sing-box version: ${VERSION_INPUT}" >&2
+            exit 1
+          fi
+          echo "value=${VERSION_INPUT}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout upstream sing-box tag
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          repository: SagerNet/sing-box
+          ref: v${{ steps.verify_version.outputs.value }}
+          path: sing-box
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: sing-box/go.mod
+          cache: false
+
+      - name: Download ARM64 Keenetic artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: keenetic-bin-arm64-musl-default
+          path: dist
+
+      - name: Make Keenetic artifact executable
+        env:
+          VERSION: ${{ inputs.version }}
+        run: chmod +x "dist/sing-box_${VERSION}_linux_arm64_musl"
+
+      - name: Download official upstream ARM64 binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -xeuo pipefail
+          asset="sing-box-${VERSION}-linux-arm64.tar.gz"
+          mkdir -p upstream
+          gh release download "v${VERSION}" \
+            --repo SagerNet/sing-box \
+            --pattern "$asset" \
+            --dir upstream
+          expected=$(gh release view "v${VERSION}" --repo SagerNet/sing-box --json assets \
+            --jq ".assets[] | select(.name == \"$asset\") | .digest")
+          if [[ ! "$expected" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Could not retrieve the upstream release SHA-256 for ${asset}" >&2
+            exit 1
+          fi
+          actual="sha256:$(sha256sum "upstream/${asset}" | cut -d' ' -f1)"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "Upstream asset digest mismatch: expected ${expected}, got ${actual}" >&2
+            exit 1
+          fi
+          mkdir -p upstream/extracted
+          tar -xzf "upstream/${asset}" -C upstream/extracted
+          upstream_binary=$(find upstream/extracted -type f -name sing-box -print -quit)
+          if [[ -z "$upstream_binary" ]]; then
+            echo "The upstream archive does not contain a sing-box binary" >&2
+            exit 1
+          fi
+          install -m 755 "$upstream_binary" dist/sing-box-unpatched-arm64
+
+      - name: Confirm unpatched upstream fails the REALITY check
+        run: |
+          set -euo pipefail
+          if bash .github/verify/reality/verify.sh dist/sing-box-unpatched-arm64 >"$RUNNER_TEMP/unpatched-verification.log" 2>&1; then
+            echo "Unpatched upstream unexpectedly passed the REALITY verification" >&2
+            exit 1
+          fi
+          if ! grep -q "session ID does not identify client 26.3.27" "$RUNNER_TEMP/unpatched-verification.log"; then
+            cat "$RUNNER_TEMP/unpatched-verification.log" >&2
+            echo "Unpatched baseline failed for a reason other than the expected old REALITY session ID" >&2
+            exit 1
+          fi
+          echo "Unpatched upstream failed on its old REALITY session ID, as expected"
+
+      - name: Verify patched REALITY ClientHello
+        env:
+          VERSION: ${{ inputs.version }}
+        run: bash .github/verify/reality/verify.sh "dist/sing-box_${VERSION}_linux_arm64_musl"
+
+  release:
+    name: Upload binaries to GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build, verify_arm64]
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Download all binary artifacts
+        uses: actions/download-artifact@v5
+        with:
+          pattern: keenetic-bin-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          RELEASE_NOTES: |
+            Standalone sing-box binaries for Keenetic routers.
+
+            Build tags:
+            - Common: COMMON_BUILD_TAGS
+            - ARM64 and MIPS little-endian: also `with_naive_outbound`, `with_musl`
+
+            Applied patches:
+            - `reality.patch` - For REALITY `chrome` and `randomized` fingerprints: preserves the ML-KEM hybrid share for `chrome`, stabilizes key shares and ALPN for `randomized`, and updates REALITY client version identification.
+
+            UPX-compressed variants use the `_upx` suffix. They are included only when UPX verification succeeds.
+
+            ---
+
+            Самостоятельные бинарные файлы sing-box для роутеров Keenetic.
+
+            Теги сборки:
+            - Общие: COMMON_BUILD_TAGS
+            - Для ARM64 и MIPS little-endian дополнительно: `with_naive_outbound`, `with_musl`
+
+            Примененные патчи:
+            - `reality.patch` - Для REALITY-отпечатков `chrome` и `randomized`: сохраняет ML-KEM hybrid share для `chrome`, стабилизирует key shares и ALPN для `randomized`, обновляет идентификацию версии клиента.
+
+            Сжатые UPX варианты имеют суффикс `_upx` и включаются только после успешной проверки UPX.
+        run: |
+          set -xeuo pipefail
+          shopt -s nullglob
+          binaries=(dist/sing-box_*)
+          if (( ${#binaries[@]} == 0 )); then
+            echo "No Keenetic binaries were downloaded" >&2
+            exit 1
+          fi
+
+          tag="v${VERSION}"
+          is_prerelease=false
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            is_prerelease=true
+          fi
+          common_build_tags='`with_quic`, `with_utls`, `with_clash_api`, `badlinkname`, `tfogo_checklinkname0`'
+          if [[ "${is_prerelease}" != "true" ]]; then
+            common_build_tags="\`with_gvisor\`, ${common_build_tags}"
+          fi
+          RELEASE_NOTES="${RELEASE_NOTES//COMMON_BUILD_TAGS/${common_build_tags}}"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            release_id=$(gh release view "$tag" --json databaseId --jq .databaseId)
+            gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+              --method PATCH \
+              -F "name=${VERSION}" \
+              -F "body=${RELEASE_NOTES}" \
+              -F "prerelease=${is_prerelease}"
+            gh release upload "$tag" "${binaries[@]}" --clobber
+          else
+            release_flags=(
+              --title "${VERSION}"
+              --notes "$RELEASE_NOTES"
+              --target "$GITHUB_SHA"
+            )
+            if [[ "$is_prerelease" == "true" ]]; then
+              release_flags+=(--prerelease)
+            fi
+            gh release create "$tag" "${binaries[@]}" "${release_flags[@]}"
+          fi
